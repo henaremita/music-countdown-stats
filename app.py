@@ -1,42 +1,65 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import plotly.express as px
 
-# Page Config
-st.set_page_config(page_title="Countdown Live Stats", layout="wide")
+# Page Setup
+st.set_page_config(page_title="Countdown Stats", layout="wide")
 st.title("🎵 Live Song Countdown Dashboard")
 
-# 1. Establish Connection
-conn = st.connection("gsheets", type=GSheetsConnection)
+# The URL you provided (Public CSV)
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQJhiV_Pa-naVPS--8plhf4I7Qh0HdH4mOVl4D2bql-fe87W5SN1wxwB52Bo1d_Q4yd1eC6RdXPiBez/pub?output=csv"
 
-# 2. Read Data (Use your Sheet URL here)
-url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQJhiV_Pa-naVPS--8plhf4I7Qh0HdH4mOVl4D2bql-fe87W5SN1wxwB52Bo1d_Q4yd1eC6RdXPiBez/pub?output=csv"
-df = conn.read(spreadsheet=url, ttl="10m") # Updates every 10 mins
+# Function to load data
+@st.cache_data(ttl=600) # Refresh data every 10 minutes
+def load_data():
+    return pd.read_csv(SHEET_URL)
 
-# 3. Top Level Metrics
-total_votes = len(df)
-unique_voters = df['gigyaUserId'].nunique()
-top_song = df['Song'].mode()[0]
+try:
+    df = load_data()
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Total Votes", total_votes)
-col2.metric("Unique Voters", unique_voters)
-col3.metric("Current #1 Song", top_song)
+    # --- TOP METRICS ---
+    total_votes = len(df)
+    unique_voters = df['gigyaUserId'].nunique()
+    top_song = df['Song'].mode()[0]
 
-# 4. Charts
-st.divider()
-left_co, right_co = st.columns(2)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Votes", f"{total_votes:,}")
+    m2.metric("Unique Voters", f"{unique_voters:,}")
+    m3.metric("Current #1", top_song)
 
-with left_co:
-    st.subheader("Top 10 Songs")
-    song_counts = df['Song'].value_counts().head(10)
-    st.bar_chart(song_counts, color="#FF4B4B")
+    st.divider()
 
-with right_co:
-    st.subheader("Top 10 Artists")
-    artist_counts = df['Artist'].value_counts().head(10)
-    st.bar_chart(artist_counts, color="#1DE9B6")
+    # --- CHARTS ---
+    col1, col2 = st.columns(2)
 
-# 5. Raw Data Table (Optional)
-with st.expander("View Raw Voting Data"):
-    st.dataframe(df)
+    with col1:
+        st.subheader("Top 10 Songs")
+        top_songs = df['Song'].value_counts().head(10).reset_index()
+        top_songs.columns = ['Song', 'Votes']
+        fig_songs = px.bar(top_songs, x='Votes', y='Song', orientation='h', 
+                           color='Votes', color_continuous_scale='Viridis')
+        fig_songs.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_songs, use_container_width=True)
+
+    with col2:
+        st.subheader("Top 10 Artists")
+        top_artists = df['Artist'].value_counts().head(10).reset_index()
+        top_artists.columns = ['Artist', 'Votes']
+        fig_artists = px.bar(top_artists, x='Votes', y='Artist', orientation='h',
+                             color='Votes', color_continuous_scale='Magma')
+        fig_artists.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_artists, use_container_width=True)
+
+    # --- VOTING SOURCE ---
+    st.subheader("How people are voting")
+    source_counts = df['Source'].value_counts().reset_index()
+    fig_pie = px.pie(source_counts, values='count', names='Source', hole=0.4)
+    st.plotly_chart(fig_pie)
+
+    # --- DATA TABLE ---
+    with st.expander("See Raw Records"):
+        st.write(df)
+
+except Exception as e:
+    st.error(f"Error loading data: {e}")
+    st.info("Make sure your Google Sheet is still published to the web as a CSV.")
